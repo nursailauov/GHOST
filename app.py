@@ -652,6 +652,38 @@ def is_client_connected(client):
 def get_connected_clients():
     return {account_id: client for account_id, client in clients.items() if is_client_connected(client)}
 
+def trigger_reconnect_for_disconnected_clients():
+    """Try to recover disconnected clients in background threads."""
+    for account_id, client in clients.items():
+        if is_client_connected(client):
+            continue
+        try:
+            if getattr(client, 'running', False):
+                t = threading.Thread(target=client.restart, kwargs={'delay': 1}, daemon=True)
+            else:
+                t = threading.Thread(target=client.run, daemon=True)
+            t.start()
+            print(f"[{account_id}] Reconnect triggered")
+        except Exception as e:
+            print(f"[{account_id}] Failed to trigger reconnect: {e}")
+
+def wait_for_connected_clients(timeout_seconds=15, poll_interval=1):
+    """Wait briefly for at least one connected client and auto-trigger reconnect if needed."""
+    connected = get_connected_clients()
+    if connected:
+        return connected
+
+    trigger_reconnect_for_disconnected_clients()
+    deadline = time.time() + timeout_seconds
+
+    while time.time() < deadline:
+        connected = get_connected_clients()
+        if connected:
+            return connected
+        time.sleep(poll_interval)
+
+    return {}
+
 def cleanup():
     global shutting_down
     shutting_down = True
@@ -806,11 +838,13 @@ def execute_command_all():
 
     connected_clients = get_connected_clients()
     if not connected_clients:
-        return jsonify({
-            'error': 'Clients exist but sockets are not connected yet. Wait a few seconds and retry /nr.',
-            'total_clients': len(clients),
-            'connected_clients': 0
-        }), 503
+        connected_clients = wait_for_connected_clients(timeout_seconds=15, poll_interval=1)
+        if not connected_clients:
+            return jsonify({
+                'error': 'Bots started but not connected yet. Retry in 5-15 seconds or call /start_client again to restart disconnected bots.',
+                'total_clients': len(clients),
+                'connected_clients': 0
+            }), 503
 
     results = {}
     
@@ -897,11 +931,13 @@ def custom_nr_command():
 
     connected_clients = get_connected_clients()
     if not connected_clients:
-        return jsonify({
-            'error': 'Bots started but not connected yet. Retry in 5-15 seconds or call /start_client again to restart disconnected bots.',
-            'total_clients': len(clients),
-            'connected_clients': 0
-        }), 503
+        connected_clients = wait_for_connected_clients(timeout_seconds=15, poll_interval=1)
+        if not connected_clients:
+            return jsonify({
+                'error': 'Bots started but not connected yet. Retry in 5-15 seconds or call /start_client again to restart disconnected bots.',
+                'total_clients': len(clients),
+                'connected_clients': 0
+            }), 503
 
     results = {}
     
