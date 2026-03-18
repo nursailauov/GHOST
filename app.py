@@ -361,7 +361,7 @@ class TcpBotConnectMain:
         return whisper_ip, whisper_port, online_ip, online_port
     
     def GET_LOGIN_DATA(self, JWT_TOKEN, PAYLOAD):
-        endpoints = [GetLoginDataRegionMena, "https://clientbp.common.ggbluefox.com/GetLoginData"]
+        endpoints = [GetLoginDataRegionMena, "https://clientbp.ggpolarbear.com/GetLoginData"]
         endpoints = list(dict.fromkeys(endpoints))
         headers_base = {
             'Expect': '100-continue',
@@ -454,7 +454,7 @@ class TcpBotConnectMain:
         hex_data = data.hex()
         encrypted_data = encrypt_api(hex_data)
         Final_Payload = bytes.fromhex(encrypted_data)
-        endpoints = [MajorLoginRegionMena, "https://loginbp.common.ggbluefox.com/MajorLogin"]
+        endpoints = [MajorLoginRegionMena, "https://loginbp.ggpolarbear.com/MajorLogin"]
         endpoints = list(dict.fromkeys(endpoints))
         RESPONSE = None
         for endpoint in endpoints:
