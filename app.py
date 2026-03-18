@@ -314,12 +314,16 @@ class TcpBotConnectMain:
                     time.sleep(2)
     
     def parse_my_message(self, serialized_data):
-        MajorLogRes = MajorLoginRes() 
+        MajorLogRes = MajorLoginRes()
+        if not serialized_data:
+            raise ValueError("MajorLoginRes payload is empty")
         MajorLogRes.ParseFromString(serialized_data)
         timestamp = MajorLogRes.kts
         key = MajorLogRes.ak
         iv = MajorLogRes.aiv
         BASE64_TOKEN = MajorLogRes.token
+        if not BASE64_TOKEN:
+            raise ValueError("MajorLoginRes token is empty")
         timestamp_obj = Timestamp()
         timestamp_obj.FromNanoseconds(timestamp)
         timestamp_seconds = timestamp_obj.seconds
@@ -419,18 +423,29 @@ class TcpBotConnectMain:
         encrypted_data = encrypt_api(hex_data)
         Final_Payload = bytes.fromhex(encrypted_data)
         URL = MajorLoginRegionMena
-        RESPONSE = requests.post(URL, headers=headers, data=Final_Payload, verify=False)
-        combined_timestamp, key, iv, BASE64_TOKEN = self.parse_my_message(RESPONSE.content)
-        if RESPONSE.status_code == 200:
-            if len(RESPONSE.text) < 10:
-                return False
-            whisper_ip, whisper_port, online_ip, online_port = self.GET_PAYLOAD_BY_DATA(BASE64_TOKEN, NEW_ACCESS_TOKEN, 1)
-            self.key = key
-            self.iv = iv
-            print(f"[{self.account_id}] Key: {key}, IV: {iv}")
-            return (BASE64_TOKEN, key, iv, combined_timestamp, whisper_ip, whisper_port, online_ip, online_port)
-        else:
+        RESPONSE = requests.post(URL, headers=headers, data=Final_Payload, verify=False, timeout=20)
+        if RESPONSE.status_code != 200:
+            self.set_last_error(f"major_login_http_{RESPONSE.status_code}")
+            print(f"[{self.account_id}] MajorLogin failed with status {RESPONSE.status_code}")
             return False
+
+        if len(RESPONSE.content) < 10:
+            self.set_last_error("major_login_empty_or_short_payload")
+            print(f"[{self.account_id}] MajorLogin returned short payload")
+            return False
+
+        try:
+            combined_timestamp, key, iv, BASE64_TOKEN = self.parse_my_message(RESPONSE.content)
+        except Exception as e:
+            self.set_last_error(f"major_login_parse_error: {e}")
+            print(f"[{self.account_id}] Failed to parse MajorLoginRes: {e}")
+            return False
+
+        whisper_ip, whisper_port, online_ip, online_port = self.GET_PAYLOAD_BY_DATA(BASE64_TOKEN, NEW_ACCESS_TOKEN, 1)
+        self.key = key
+        self.iv = iv
+        print(f"[{self.account_id}] Key: {key}, IV: {iv}")
+        return (BASE64_TOKEN, key, iv, combined_timestamp, whisper_ip, whisper_port, online_ip, online_port)
     
     def get_tok(self):
         token_data = self.guest_token(self.account_id, self.password)
