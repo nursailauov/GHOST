@@ -126,8 +126,15 @@ class TcpBotConnectMain:
             try:
                 self.connection_attempts += 1
                 print(f"[{self.account_id}] محاولة الاتصال {self.connection_attempts}/{self.max_connection_attempts}")
-                self.get_tok()
-                break
+                if self.get_tok():
+                    break
+                if self.connection_attempts >= self.max_connection_attempts:
+                    self.set_last_error("max_connection_attempts_reached")
+                    print(f"[{self.account_id}] وصل للحد الأقصى لمحاولات الاتصال. التوقف.")
+                    self.stop()
+                    break
+                print(f"[{self.account_id}] فشل تسجيل الدخول، إعادة المحاولة بعد 5 ثواني...")
+                time.sleep(5)
             except Exception as e:
                 self.set_last_error(f"run_error: {e}")
                 print(f"[{self.account_id}] Error in run: {e}")
@@ -483,8 +490,7 @@ class TcpBotConnectMain:
         token_data = self.guest_token(self.account_id, self.password)
         if not token_data:
             print(f"[{self.account_id}] Failed to get token")
-            self.restart()
-            return
+            return False
         
         token, key, iv, Timestamp, whisper_ip, whisper_port, online_ip, online_port = token_data
         print(f"[{self.account_id}] Whisper: {whisper_ip}:{whisper_port}")
@@ -498,9 +504,9 @@ class TcpBotConnectMain:
             BASE64_TOKEN_ = token.encode().hex()
             print(f"[{self.account_id}] Token decoded. Account ID: {account_id}")
         except Exception as e:
+            self.set_last_error(f"token_decode_error: {e}")
             print(f"[{self.account_id}] Error processing token: {e}")
-            self.restart()
-            return
+            return False
         
         try:
             head = hex(len(encrypt_packet(BASE64_TOKEN_, key, iv)) // 2)[2:]
@@ -519,12 +525,12 @@ class TcpBotConnectMain:
             head = f'0115{zeros}{encoded_acc}{time_hex}00000{head}'
             final_token = head + encrypt_packet(BASE64_TOKEN_, key, iv)
         except Exception as e:
+            self.set_last_error(f"final_token_build_error: {e}")
             print(f"[{self.account_id}] Error creating final token: {e}")
-            self.restart()
-            return
+            return False
         
         self.connect(final_token, 'anything', key, iv, whisper_ip, whisper_port, online_ip, online_port)
-        return final_token, key, iv
+        return True
     
     def dec_to_hex(self, ask):
         ask_result = hex(ask)
