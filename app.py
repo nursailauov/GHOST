@@ -100,6 +100,14 @@ class TcpBotConnectMain:
         self.max_connection_attempts = 3
         self.AutH = None
         self.DaTa2 = None
+        self.last_error = None
+        self.last_error_at = None
+        self.last_disconnect_reason = None
+
+    def set_last_error(self, message):
+        self.last_error = str(message)
+        self.last_error_at = datetime.utcnow().isoformat() + "Z"
+        self.last_disconnect_reason = str(message)
     
     def run(self):
         if shutting_down:
@@ -121,9 +129,11 @@ class TcpBotConnectMain:
                 self.get_tok()
                 break
             except Exception as e:
+                self.set_last_error(f"run_error: {e}")
                 print(f"[{self.account_id}] Error in run: {e}")
                 if self.connection_attempts >= self.max_connection_attempts:
                     print(f"[{self.account_id}] وصل للحد الأقصى لمحاولات الاتصال. التوقف.")
+                    self.set_last_error("max_connection_attempts_reached")
                     self.stop()
                     break
                 print(f"[{self.account_id}] إعادة المحاولة بعد 5 ثواني...")
@@ -131,6 +141,7 @@ class TcpBotConnectMain:
     
     def stop(self):
         self.running = False
+        self.last_disconnect_reason = "stopped_manually"
         try:
             if self.clientsocket:
                 self.clientsocket.close()
@@ -163,9 +174,13 @@ class TcpBotConnectMain:
         except (OSError, socket.error) as e:
             if e.errno == errno.EBADF:
                 print(f"[{self.account_id}] Socket bad file descriptor")
+                self.set_last_error("socket_bad_file_descriptor")
+            else:
+                self.set_last_error(f"socket_check_error: {e}")
             return False
         except Exception as e:
             print(f"[{self.account_id}] Socket check error: {e}")
+            self.set_last_error(f"socket_check_unexpected_error: {e}")
             return False
     
     def ensure_connection(self):
@@ -188,6 +203,9 @@ class TcpBotConnectMain:
                 print(f"[{self.account_id}] Connected to {online_ip}:{online_port}")
                 self.socket_client.send(bytes.fromhex(tok))
                 print(f"[{self.account_id}] Token sent successfully")
+                self.last_error = None
+                self.last_error_at = None
+                self.last_disconnect_reason = None
                 
                 while self.running and not shutting_down and self.is_socket_connected(self.socket_client):
                     try:
@@ -196,6 +214,7 @@ class TcpBotConnectMain:
                             self.DaTa2 = self.socket_client.recv(99999)
                             if not self.DaTa2:
                                 print(f"[{self.account_id}] Server closed connection gracefully")
+                                self.last_disconnect_reason = "server_closed_connection"
                                 break
 
                             # التحقق من باك 0500
@@ -226,29 +245,37 @@ class TcpBotConnectMain:
 
                                 except Exception as parse_err:
                                     print(f"[{self.account_id}] Error parsing 0500: {parse_err}")
+                                    self.set_last_error(f"parse_0500_error: {parse_err}")
                                 
                     except socket.timeout:
                         continue
                     except (OSError, socket.error) as e:
                         if e.errno == errno.EBADF:
                             print(f"[{self.account_id}] Bad file descriptor, reconnecting...")
+                            self.set_last_error("socket_bad_file_descriptor_reconnect")
                             break
                         else:
                             print(f"[{self.account_id}] Socket error: {e}. Reconnecting...")
+                            self.set_last_error(f"socket_error_reconnect: {e}")
                             break
                     except Exception as e:
                         print(f"[{self.account_id}] Unexpected error: {e}. Reconnecting...")
+                        self.set_last_error(f"socket_unexpected_error_reconnect: {e}")
                         break
                         
             except socket.timeout:
                 print(f"[{self.account_id}] Connection timeout, retrying...")
+                self.set_last_error("connection_timeout")
             except (OSError, socket.error) as e:
                 if e.errno == errno.EBADF:
                     print(f"[{self.account_id}] Bad file descriptor during connection")
+                    self.set_last_error("bad_file_descriptor_during_connection")
                 else:
                     print(f"[{self.account_id}] Connection error: {e}")
+                    self.set_last_error(f"connection_error: {e}")
             except Exception as e:
                 print(f"[{self.account_id}] Unexpected error: {e}")
+                self.set_last_error(f"unexpected_connection_error: {e}")
     def connect(self, tok, packet, key, iv, whisper_ip, whisper_port, online_ip, online_port):
         while self.running and not shutting_down:
             try:
@@ -274,6 +301,7 @@ class TcpBotConnectMain:
             except Exception as e:
                 if not shutting_down:
                     print(f"[{self.account_id}] Error in connect: {e}. Retrying in 3 seconds...")
+                    self.set_last_error(f"connect_loop_error: {e}")
                     time.sleep(3)
             finally:
                 if self.clientsocket:
@@ -659,7 +687,10 @@ def get_client_health_snapshot():
             'has_socket': has_socket,
             'socket_connected': connected,
             'connection_attempts': int(getattr(client, 'connection_attempts', 0)),
-            'max_connection_attempts': int(getattr(client, 'max_connection_attempts', 0))
+            'max_connection_attempts': int(getattr(client, 'max_connection_attempts', 0)),
+            'last_error': getattr(client, 'last_error', None),
+            'last_error_at': getattr(client, 'last_error_at', None),
+            'last_disconnect_reason': getattr(client, 'last_disconnect_reason', None)
         }
     return snapshot
 
