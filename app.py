@@ -733,6 +733,11 @@ def execute_command_all():
     if not command:
         return jsonify({'error': 'Command parameter is required'}), 400
 
+    if not clients:
+        return jsonify({
+            'error': 'No active clients. Start at least one client first using /start_client?account_id=...&password=...'
+        }), 400
+
     results = {}
     
     # Handle /nr command
@@ -810,6 +815,11 @@ def custom_nr_command():
 
     if not teamcode or not ghostname:
         return jsonify({'error': 'teamcode and ghostname parameters are required'}), 400
+
+    if not clients:
+        return jsonify({
+            'error': 'No active clients. Start bots first using /start_client, then call /nr.'
+        }), 400
 
     results = {}
     
