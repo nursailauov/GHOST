@@ -649,6 +649,20 @@ def is_client_connected(client):
         and client.is_socket_connected(client.socket_client)
     )
 
+def get_client_health_snapshot():
+    snapshot = {}
+    for account_id, client in clients.items():
+        has_socket = bool(getattr(client, 'socket_client', None))
+        connected = is_client_connected(client)
+        snapshot[str(account_id)] = {
+            'running': bool(getattr(client, 'running', False)),
+            'has_socket': has_socket,
+            'socket_connected': connected,
+            'connection_attempts': int(getattr(client, 'connection_attempts', 0)),
+            'max_connection_attempts': int(getattr(client, 'max_connection_attempts', 0))
+        }
+    return snapshot
+
 def get_connected_clients():
     return {account_id: client for account_id, client in clients.items() if is_client_connected(client)}
 
@@ -822,6 +836,22 @@ def execute_command():
 def list_clients():
     return jsonify({'clients': list(clients.keys())}), 200
 
+@app.route('/health_clients', methods=['GET'])
+def health_clients():
+    if shutting_down:
+        return jsonify({'error': 'Server is shutting down'}), 503
+
+    health = get_client_health_snapshot()
+    connected_count = sum(1 for item in health.values() if item['socket_connected'])
+    running_count = sum(1 for item in health.values() if item['running'])
+
+    return jsonify({
+        'total_clients': len(health),
+        'running_clients': running_count,
+        'connected_clients': connected_count,
+        'clients': health
+    }), 200
+
 @app.route('/execute_command_all', methods=['GET'])
 def execute_command_all():
     if shutting_down:
@@ -840,11 +870,7 @@ def execute_command_all():
     if not connected_clients:
         connected_clients = wait_for_connected_clients(timeout_seconds=15, poll_interval=1)
         if not connected_clients:
-            return jsonify({
-                'error': 'Bots started but not connected yet. Retry in 5-15 seconds or call /start_client again to restart disconnected bots.',
-                'total_clients': len(clients),
-                'connected_clients': 0
-            }), 503
+            connected_clients = clients.copy()
 
     results = {}
     
@@ -910,7 +936,10 @@ def execute_command_all():
             else:
                 results[account_id] = f"Unknown or invalid command: {command} | Name: {account_name}"
 
-    return jsonify({'results': results})
+    response = {'results': results}
+    if not get_connected_clients():
+        response['warning'] = 'No fully connected sockets yet. Commands were sent anyway; check per-account results and /health_clients.'
+    return jsonify(response)
 
 # NEW CUSTOM NR ENDPOINT
 @app.route('/nr', methods=['GET'])
@@ -933,11 +962,7 @@ def custom_nr_command():
     if not connected_clients:
         connected_clients = wait_for_connected_clients(timeout_seconds=15, poll_interval=1)
         if not connected_clients:
-            return jsonify({
-                'error': 'Bots started but not connected yet. Retry in 5-15 seconds or call /start_client again to restart disconnected bots.',
-                'total_clients': len(clients),
-                'connected_clients': 0
-            }), 503
+            connected_clients = clients.copy()
 
     results = {}
     
@@ -955,7 +980,10 @@ def custom_nr_command():
         result = client.execute_command(f"/nr={teamcode}&{account_name}")
         results[account_id] = f"{result} | Name: {account_name}"
 
-    return jsonify({'results': results})
+    response = {'results': results}
+    if not get_connected_clients():
+        response['warning'] = 'No fully connected sockets yet. Commands were sent anyway; check per-account results and /health_clients.'
+    return jsonify(response)
 
 @app.route('/shutdown', methods=['GET'])
 def shutdown_server():
