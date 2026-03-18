@@ -729,6 +729,15 @@ def wait_for_connected_clients(timeout_seconds=15, poll_interval=1):
 
     return {}
 
+def resolve_connected_clients(timeout_seconds=8, poll_interval=1):
+    """
+    Return currently connected clients, waiting briefly and triggering reconnect if needed.
+    """
+    connected_clients = get_connected_clients()
+    if connected_clients:
+        return connected_clients
+    return wait_for_connected_clients(timeout_seconds=timeout_seconds, poll_interval=poll_interval)
+
 def cleanup():
     global shutting_down
     shutting_down = True
@@ -897,11 +906,12 @@ def execute_command_all():
             'error': 'No active clients. Start at least one client first using /start_client?account_id=...&password=...'
         }), 400
 
-    connected_clients = get_connected_clients()
+    connected_clients = resolve_connected_clients(timeout_seconds=8, poll_interval=1)
     if not connected_clients:
-        connected_clients = wait_for_connected_clients(timeout_seconds=15, poll_interval=1)
-        if not connected_clients:
-            connected_clients = clients.copy()
+        return jsonify({
+            'error': 'No connected sockets yet. Wait for clients to connect and retry.',
+            'hint': 'Use /health_clients to check which accounts are connected.'
+        }), 503
 
     results = {}
     
@@ -967,10 +977,7 @@ def execute_command_all():
             else:
                 results[account_id] = f"Unknown or invalid command: {command} | Name: {account_name}"
 
-    response = {'results': results}
-    if not get_connected_clients():
-        response['warning'] = 'No fully connected sockets yet. Commands were sent anyway; check per-account results and /health_clients.'
-    return jsonify(response)
+    return jsonify({'results': results}), 200
 
 # NEW CUSTOM NR ENDPOINT
 @app.route('/nr', methods=['GET'])
@@ -989,11 +996,12 @@ def custom_nr_command():
             'error': 'No active clients. Start bots first using /start_client, then call /nr.'
         }), 400
 
-    connected_clients = get_connected_clients()
+    connected_clients = resolve_connected_clients(timeout_seconds=8, poll_interval=1)
     if not connected_clients:
-        connected_clients = wait_for_connected_clients(timeout_seconds=15, poll_interval=1)
-        if not connected_clients:
-            connected_clients = clients.copy()
+        return jsonify({
+            'error': 'No connected sockets yet. Wait for clients to connect and retry /nr.',
+            'hint': 'Use /health_clients to monitor connection status.'
+        }), 503
 
     results = {}
     
@@ -1011,10 +1019,7 @@ def custom_nr_command():
         result = client.execute_command(f"/nr={teamcode}&{account_name}")
         results[account_id] = f"{result} | Name: {account_name}"
 
-    response = {'results': results}
-    if not get_connected_clients():
-        response['warning'] = 'No fully connected sockets yet. Commands were sent anyway; check per-account results and /health_clients.'
-    return jsonify(response)
+    return jsonify({'results': results}), 200
 
 @app.route('/shutdown', methods=['GET'])
 def shutdown_server():
