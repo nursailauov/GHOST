@@ -388,7 +388,7 @@ def SpamAddFriend(uid):
         except Exception as e:
             return f"Error: {e}"   
 def GetPlayerInfoRegionMena(uid):
-    url = f"https://info-five-sooty.vercel.app/get?uid={uid}"
+    url = f"https://info-freefire-nur.vercel.app/get?uid={uid}"
     req = requests.get(url)
     data = req.json()    
     account = data.get('AccountInfo', {})
