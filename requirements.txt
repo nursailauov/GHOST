@@ -6,4 +6,4 @@ protobuf
 psutil
 urllib3
 cryptography
-pycryptodome=
+pycryptodome
