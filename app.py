@@ -37,6 +37,7 @@ import sys
 import psutil
 import urllib3
 from urllib.parse import urlparse
+import random
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -134,8 +135,9 @@ class TcpBotConnectMain:
                     print(f"[{self.account_id}] وصل للحد الأقصى لمحاولات الاتصال. التوقف.")
                     self.stop()
                     break
-                print(f"[{self.account_id}] فشل تسجيل الدخول، إعادة المحاولة بعد 5 ثواني...")
-                time.sleep(5)
+                retry_delay = 5 + random.uniform(0.5, 2.0)
+                print(f"[{self.account_id}] فشل تسجيل الدخول، إعادة المحاولة بعد {retry_delay:.1f} ثانية...")
+                time.sleep(retry_delay)
             except Exception as e:
                 self.set_last_error(f"run_error: {e}")
                 print(f"[{self.account_id}] Error in run: {e}")
@@ -144,8 +146,9 @@ class TcpBotConnectMain:
                     self.set_last_error("max_connection_attempts_reached")
                     self.stop()
                     break
-                print(f"[{self.account_id}] إعادة المحاولة بعد 5 ثواني...")
-                time.sleep(5)
+                retry_delay = 5 + random.uniform(0.5, 2.0)
+                print(f"[{self.account_id}] إعادة المحاولة بعد {retry_delay:.1f} ثانية...")
+                time.sleep(retry_delay)
     
     def stop(self):
         self.running = False
@@ -847,6 +850,8 @@ def start_client():
             client_thread = threading.Thread(target=client.run)
             client_thread.daemon = True
             client_thread.start()
+            # Stagger startup to reduce burst load / 503 spikes from upstream login services
+            time.sleep(1.5)
             if was_existing:
                 restarted.append(acc_id)
             else:
