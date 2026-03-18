@@ -641,6 +641,17 @@ def load_accounts(file_path):
     with open(file_path, 'r') as file:
         return json.load(file)
 
+def is_client_connected(client):
+    return (
+        client
+        and getattr(client, 'running', False)
+        and getattr(client, 'socket_client', None)
+        and client.is_socket_connected(client.socket_client)
+    )
+
+def get_connected_clients():
+    return {account_id: client for account_id, client in clients.items() if is_client_connected(client)}
+
 def cleanup():
     global shutting_down
     shutting_down = True
@@ -666,26 +677,40 @@ def start_client():
             return jsonify({'error': f'Failed to load accounts.json: {e}'}), 500
 
         started = []
+        restarted = []
         already_running = []
 
         for acc_id, acc_password in accounts.items():
             acc_id = str(acc_id)
+            was_existing = acc_id in clients
             if acc_id in clients:
-                already_running.append(acc_id)
-                continue
+                existing_client = clients[acc_id]
+                if is_client_connected(existing_client):
+                    already_running.append(acc_id)
+                    continue
+                try:
+                    existing_client.stop()
+                except Exception:
+                    pass
+                del clients[acc_id]
 
             client = TcpBotConnectMain(acc_id, acc_password)
             clients[acc_id] = client
             client_thread = threading.Thread(target=client.run)
             client_thread.daemon = True
             client_thread.start()
-            started.append(acc_id)
+            if was_existing:
+                restarted.append(acc_id)
+            else:
+                started.append(acc_id)
 
         return jsonify({
             'message': 'Processed bulk start from accounts.json',
             'started_count': len(started),
+            'restarted_count': len(restarted),
             'already_running_count': len(already_running),
             'started': started,
+            'restarted': restarted,
             'already_running': already_running
         }), 200
 
@@ -696,7 +721,14 @@ def start_client():
         }), 400
 
     if account_id in clients:
-        return jsonify({'error': 'Client already running'}), 400
+        existing_client = clients[account_id]
+        if is_client_connected(existing_client):
+            return jsonify({'error': 'Client already running'}), 400
+        try:
+            existing_client.stop()
+        except Exception:
+            pass
+        del clients[account_id]
 
     client = TcpBotConnectMain(account_id, password)
     clients[account_id] = client
@@ -772,6 +804,14 @@ def execute_command_all():
             'error': 'No active clients. Start at least one client first using /start_client?account_id=...&password=...'
         }), 400
 
+    connected_clients = get_connected_clients()
+    if not connected_clients:
+        return jsonify({
+            'error': 'Clients exist but sockets are not connected yet. Wait a few seconds and retry /nr.',
+            'total_clients': len(clients),
+            'connected_clients': 0
+        }), 503
+
     results = {}
     
     # Handle /nr command
@@ -792,7 +832,7 @@ def execute_command_all():
             "4648410970": ghost_name
         }
 
-        for account_id, client in clients.items():
+        for account_id, client in connected_clients.items():
             account_name = ghost_names.get(str(account_id), str(account_id))
             result = client.execute_command(f"/nr={team_code}&{account_name}")
             results[account_id] = f"{result} | Name: {account_name}"
@@ -808,7 +848,7 @@ def execute_command_all():
             "4648410970": "tt:nur_sailauov"
         }
 
-        for account_id, client in clients.items():
+        for account_id, client in connected_clients.items():
             account_name = ghost_names.get(str(account_id), str(account_id))
             if cmd == "/bngx" and arg:
                 result = client.execute_command(cmd, arg, account_name)
@@ -828,7 +868,7 @@ def execute_command_all():
     "4648410970": "BOT5"
 }
 
-        for account_id, client in clients.items():
+        for account_id, client in connected_clients.items():
             account_name = ghost_names.get(str(account_id), str(account_id))
             if cmd == "/bngx" and arg:
                 result = client.execute_command(cmd, arg, account_name)
@@ -855,6 +895,14 @@ def custom_nr_command():
             'error': 'No active clients. Start bots first using /start_client, then call /nr.'
         }), 400
 
+    connected_clients = get_connected_clients()
+    if not connected_clients:
+        return jsonify({
+            'error': 'Bots started but not connected yet. Retry in 5-15 seconds or call /start_client again to restart disconnected bots.',
+            'total_clients': len(clients),
+            'connected_clients': 0
+        }), 503
+
     results = {}
     
     # Use the same ghost name for all accounts
@@ -866,7 +914,7 @@ def custom_nr_command():
         "4648410970": ghostname
     }
 
-    for account_id, client in clients.items():
+    for account_id, client in connected_clients.items():
         account_name = ghost_names.get(str(account_id), str(account_id))
         result = client.execute_command(f"/nr={teamcode}&{account_name}")
         results[account_id] = f"{result} | Name: {account_name}"
