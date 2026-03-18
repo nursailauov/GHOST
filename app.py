@@ -100,6 +100,14 @@ class TcpBotConnectMain:
         self.max_connection_attempts = 3
         self.AutH = None
         self.DaTa2 = None
+        self.last_error = None
+        self.last_error_at = None
+        self.last_disconnect_reason = None
+
+    def set_last_error(self, message):
+        self.last_error = str(message)
+        self.last_error_at = datetime.utcnow().isoformat() + "Z"
+        self.last_disconnect_reason = str(message)
     
     def run(self):
         if shutting_down:
@@ -121,9 +129,11 @@ class TcpBotConnectMain:
                 self.get_tok()
                 break
             except Exception as e:
+                self.set_last_error(f"run_error: {e}")
                 print(f"[{self.account_id}] Error in run: {e}")
                 if self.connection_attempts >= self.max_connection_attempts:
                     print(f"[{self.account_id}] وصل للحد الأقصى لمحاولات الاتصال. التوقف.")
+                    self.set_last_error("max_connection_attempts_reached")
                     self.stop()
                     break
                 print(f"[{self.account_id}] إعادة المحاولة بعد 5 ثواني...")
@@ -131,6 +141,7 @@ class TcpBotConnectMain:
     
     def stop(self):
         self.running = False
+        self.last_disconnect_reason = "stopped_manually"
         try:
             if self.clientsocket:
                 self.clientsocket.close()
@@ -163,9 +174,13 @@ class TcpBotConnectMain:
         except (OSError, socket.error) as e:
             if e.errno == errno.EBADF:
                 print(f"[{self.account_id}] Socket bad file descriptor")
+                self.set_last_error("socket_bad_file_descriptor")
+            else:
+                self.set_last_error(f"socket_check_error: {e}")
             return False
         except Exception as e:
             print(f"[{self.account_id}] Socket check error: {e}")
+            self.set_last_error(f"socket_check_unexpected_error: {e}")
             return False
     
     def ensure_connection(self):
@@ -188,6 +203,9 @@ class TcpBotConnectMain:
                 print(f"[{self.account_id}] Connected to {online_ip}:{online_port}")
                 self.socket_client.send(bytes.fromhex(tok))
                 print(f"[{self.account_id}] Token sent successfully")
+                self.last_error = None
+                self.last_error_at = None
+                self.last_disconnect_reason = None
                 
                 while self.running and not shutting_down and self.is_socket_connected(self.socket_client):
                     try:
@@ -196,6 +214,7 @@ class TcpBotConnectMain:
                             self.DaTa2 = self.socket_client.recv(99999)
                             if not self.DaTa2:
                                 print(f"[{self.account_id}] Server closed connection gracefully")
+                                self.last_disconnect_reason = "server_closed_connection"
                                 break
 
                             # التحقق من باك 0500
@@ -226,29 +245,37 @@ class TcpBotConnectMain:
 
                                 except Exception as parse_err:
                                     print(f"[{self.account_id}] Error parsing 0500: {parse_err}")
+                                    self.set_last_error(f"parse_0500_error: {parse_err}")
                                 
                     except socket.timeout:
                         continue
                     except (OSError, socket.error) as e:
                         if e.errno == errno.EBADF:
                             print(f"[{self.account_id}] Bad file descriptor, reconnecting...")
+                            self.set_last_error("socket_bad_file_descriptor_reconnect")
                             break
                         else:
                             print(f"[{self.account_id}] Socket error: {e}. Reconnecting...")
+                            self.set_last_error(f"socket_error_reconnect: {e}")
                             break
                     except Exception as e:
                         print(f"[{self.account_id}] Unexpected error: {e}. Reconnecting...")
+                        self.set_last_error(f"socket_unexpected_error_reconnect: {e}")
                         break
                         
             except socket.timeout:
                 print(f"[{self.account_id}] Connection timeout, retrying...")
+                self.set_last_error("connection_timeout")
             except (OSError, socket.error) as e:
                 if e.errno == errno.EBADF:
                     print(f"[{self.account_id}] Bad file descriptor during connection")
+                    self.set_last_error("bad_file_descriptor_during_connection")
                 else:
                     print(f"[{self.account_id}] Connection error: {e}")
+                    self.set_last_error(f"connection_error: {e}")
             except Exception as e:
                 print(f"[{self.account_id}] Unexpected error: {e}")
+                self.set_last_error(f"unexpected_connection_error: {e}")
     def connect(self, tok, packet, key, iv, whisper_ip, whisper_port, online_ip, online_port):
         while self.running and not shutting_down:
             try:
@@ -274,6 +301,7 @@ class TcpBotConnectMain:
             except Exception as e:
                 if not shutting_down:
                     print(f"[{self.account_id}] Error in connect: {e}. Retrying in 3 seconds...")
+                    self.set_last_error(f"connect_loop_error: {e}")
                     time.sleep(3)
             finally:
                 if self.clientsocket:
@@ -649,8 +677,57 @@ def is_client_connected(client):
         and client.is_socket_connected(client.socket_client)
     )
 
+def get_client_health_snapshot():
+    snapshot = {}
+    for account_id, client in clients.items():
+        has_socket = bool(getattr(client, 'socket_client', None))
+        connected = is_client_connected(client)
+        snapshot[str(account_id)] = {
+            'running': bool(getattr(client, 'running', False)),
+            'has_socket': has_socket,
+            'socket_connected': connected,
+            'connection_attempts': int(getattr(client, 'connection_attempts', 0)),
+            'max_connection_attempts': int(getattr(client, 'max_connection_attempts', 0)),
+            'last_error': getattr(client, 'last_error', None),
+            'last_error_at': getattr(client, 'last_error_at', None),
+            'last_disconnect_reason': getattr(client, 'last_disconnect_reason', None)
+        }
+    return snapshot
+
 def get_connected_clients():
     return {account_id: client for account_id, client in clients.items() if is_client_connected(client)}
+
+def trigger_reconnect_for_disconnected_clients():
+    """Try to recover disconnected clients in background threads."""
+    for account_id, client in clients.items():
+        if is_client_connected(client):
+            continue
+        try:
+            if getattr(client, 'running', False):
+                t = threading.Thread(target=client.restart, kwargs={'delay': 1}, daemon=True)
+            else:
+                t = threading.Thread(target=client.run, daemon=True)
+            t.start()
+            print(f"[{account_id}] Reconnect triggered")
+        except Exception as e:
+            print(f"[{account_id}] Failed to trigger reconnect: {e}")
+
+def wait_for_connected_clients(timeout_seconds=15, poll_interval=1):
+    """Wait briefly for at least one connected client and auto-trigger reconnect if needed."""
+    connected = get_connected_clients()
+    if connected:
+        return connected
+
+    trigger_reconnect_for_disconnected_clients()
+    deadline = time.time() + timeout_seconds
+
+    while time.time() < deadline:
+        connected = get_connected_clients()
+        if connected:
+            return connected
+        time.sleep(poll_interval)
+
+    return {}
 
 def cleanup():
     global shutting_down
@@ -790,6 +867,22 @@ def execute_command():
 def list_clients():
     return jsonify({'clients': list(clients.keys())}), 200
 
+@app.route('/health_clients', methods=['GET'])
+def health_clients():
+    if shutting_down:
+        return jsonify({'error': 'Server is shutting down'}), 503
+
+    health = get_client_health_snapshot()
+    connected_count = sum(1 for item in health.values() if item['socket_connected'])
+    running_count = sum(1 for item in health.values() if item['running'])
+
+    return jsonify({
+        'total_clients': len(health),
+        'running_clients': running_count,
+        'connected_clients': connected_count,
+        'clients': health
+    }), 200
+
 @app.route('/execute_command_all', methods=['GET'])
 def execute_command_all():
     if shutting_down:
@@ -806,11 +899,9 @@ def execute_command_all():
 
     connected_clients = get_connected_clients()
     if not connected_clients:
-        return jsonify({
-            'error': 'Clients exist but sockets are not connected yet. Wait a few seconds and retry /nr.',
-            'total_clients': len(clients),
-            'connected_clients': 0
-        }), 503
+        connected_clients = wait_for_connected_clients(timeout_seconds=15, poll_interval=1)
+        if not connected_clients:
+            connected_clients = clients.copy()
 
     results = {}
     
@@ -876,7 +967,10 @@ def execute_command_all():
             else:
                 results[account_id] = f"Unknown or invalid command: {command} | Name: {account_name}"
 
-    return jsonify({'results': results})
+    response = {'results': results}
+    if not get_connected_clients():
+        response['warning'] = 'No fully connected sockets yet. Commands were sent anyway; check per-account results and /health_clients.'
+    return jsonify(response)
 
 # NEW CUSTOM NR ENDPOINT
 @app.route('/nr', methods=['GET'])
@@ -897,11 +991,9 @@ def custom_nr_command():
 
     connected_clients = get_connected_clients()
     if not connected_clients:
-        return jsonify({
-            'error': 'Bots started but not connected yet. Retry in 5-15 seconds or call /start_client again to restart disconnected bots.',
-            'total_clients': len(clients),
-            'connected_clients': 0
-        }), 503
+        connected_clients = wait_for_connected_clients(timeout_seconds=15, poll_interval=1)
+        if not connected_clients:
+            connected_clients = clients.copy()
 
     results = {}
     
@@ -919,7 +1011,10 @@ def custom_nr_command():
         result = client.execute_command(f"/nr={teamcode}&{account_name}")
         results[account_id] = f"{result} | Name: {account_name}"
 
-    return jsonify({'results': results})
+    response = {'results': results}
+    if not get_connected_clients():
+        response['warning'] = 'No fully connected sockets yet. Commands were sent anyway; check per-account results and /health_clients.'
+    return jsonify(response)
 
 @app.route('/shutdown', methods=['GET'])
 def shutdown_server():
