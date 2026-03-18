@@ -658,8 +658,42 @@ def start_client():
     account_id = request.args.get('account_id')
     password = request.args.get('password')
 
+    # If no params are provided, start all clients from accounts.json
+    if not account_id and not password:
+        try:
+            accounts = load_accounts('accounts.json')
+        except Exception as e:
+            return jsonify({'error': f'Failed to load accounts.json: {e}'}), 500
+
+        started = []
+        already_running = []
+
+        for acc_id, acc_password in accounts.items():
+            acc_id = str(acc_id)
+            if acc_id in clients:
+                already_running.append(acc_id)
+                continue
+
+            client = TcpBotConnectMain(acc_id, acc_password)
+            clients[acc_id] = client
+            client_thread = threading.Thread(target=client.run)
+            client_thread.daemon = True
+            client_thread.start()
+            started.append(acc_id)
+
+        return jsonify({
+            'message': 'Processed bulk start from accounts.json',
+            'started_count': len(started),
+            'already_running_count': len(already_running),
+            'started': started,
+            'already_running': already_running
+        }), 200
+
+    # If only one param is passed, fail with a clear message
     if not account_id or not password:
-        return jsonify({'error': 'Account ID and password are required'}), 400
+        return jsonify({
+            'error': 'For single start, both account_id and password are required. Or call /start_client with no params to start all from accounts.json.'
+        }), 400
 
     if account_id in clients:
         return jsonify({'error': 'Client already running'}), 400
