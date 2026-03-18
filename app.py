@@ -36,6 +36,7 @@ import signal
 import sys
 import psutil
 import urllib3
+from urllib.parse import urlparse
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -360,8 +361,9 @@ class TcpBotConnectMain:
         return whisper_ip, whisper_port, online_ip, online_port
     
     def GET_LOGIN_DATA(self, JWT_TOKEN, PAYLOAD):
-        url = GetLoginDataRegionMena
-        headers = {
+        endpoints = [GetLoginDataRegionMena, "https://clientbp.common.ggbluefox.com/GetLoginData"]
+        endpoints = list(dict.fromkeys(endpoints))
+        headers_base = {
             'Expect': '100-continue',
             'Authorization': f'Bearer {JWT_TOKEN}',
             'X-Unity-Version': '2018.4.11f1',
@@ -369,31 +371,33 @@ class TcpBotConnectMain:
             'ReleaseVersion': FreeFireVersion,
             'Content-Type': 'application/x-www-form-urlencoded',
             'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 9; G011A Build/PI)',
-            'Host': 'clientbp.common.ggbluefox.com',
             'Connection': 'close',
             'Accept-Encoding': 'gzip, deflate, br',
         }
         
-        max_retries = 3
-        attempt = 0
-        while attempt < max_retries and not shutting_down:
-            try:
-                response = requests.post(url, headers=headers, data=PAYLOAD, verify=False)
-                response.raise_for_status()
-                x = response.content.hex()
-                json_result = get_available_room(x)
-                parsed_data = json.loads(json_result)
-                whisper_address = parsed_data['32']['data']
-                online_address = parsed_data['14']['data']
-                online_ip = online_address[:len(online_address) - 6]
-                whisper_ip = whisper_address[:len(whisper_address) - 6]
-                online_port = int(online_address[len(online_address) - 5:])
-                whisper_port = int(whisper_address[len(whisper_address) - 5:])
-                return whisper_ip, whisper_port, online_ip, online_port
-            except requests.RequestException as e:
-                print(f"[{self.account_id}] Request failed: {e}. Attempt {attempt + 1} of {max_retries}. Retrying...")
-                attempt += 1
-                time.sleep(2)
+        for endpoint in endpoints:
+            max_retries = 3
+            attempt = 0
+            headers = dict(headers_base)
+            headers['Host'] = urlparse(endpoint).netloc
+            while attempt < max_retries and not shutting_down:
+                try:
+                    response = requests.post(endpoint, headers=headers, data=PAYLOAD, verify=False, timeout=20)
+                    response.raise_for_status()
+                    x = response.content.hex()
+                    json_result = get_available_room(x)
+                    parsed_data = json.loads(json_result)
+                    whisper_address = parsed_data['32']['data']
+                    online_address = parsed_data['14']['data']
+                    online_ip = online_address[:len(online_address) - 6]
+                    whisper_ip = whisper_address[:len(whisper_address) - 6]
+                    online_port = int(online_address[len(online_address) - 5:])
+                    whisper_port = int(whisper_address[len(whisper_address) - 5:])
+                    return whisper_ip, whisper_port, online_ip, online_port
+                except requests.RequestException as e:
+                    print(f"[{self.account_id}] GetLoginData failed on {endpoint}: {e}. Attempt {attempt + 1} of {max_retries}.")
+                    attempt += 1
+                    time.sleep(2)
         print(f"[{self.account_id}] Failed to get login data after multiple attempts.")
         return None, None, None, None
     
@@ -434,14 +438,13 @@ class TcpBotConnectMain:
         return data
         
     def TOKEN_MAKER(self, OLD_ACCESS_TOKEN, NEW_ACCESS_TOKEN, OLD_OPEN_ID, NEW_OPEN_ID, id):
-        headers = {
+        headers_base = {
             'X-Unity-Version': '2018.4.11f1',
             'ReleaseVersion': FreeFireVersion,
             'Content-Type': 'application/x-www-form-urlencoded',
             'X-GA': 'v1 1',
             'Content-Length': '928',
             'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 7.1.2; ASUS_Z01QD Build/QKQ1.190825.002)',
-            'Host': 'loginbp.common.ggbluefox.com',
             'Connection': 'Keep-Alive',
             'Accept-Encoding': 'gzip'
         }
@@ -451,19 +454,25 @@ class TcpBotConnectMain:
         hex_data = data.hex()
         encrypted_data = encrypt_api(hex_data)
         Final_Payload = bytes.fromhex(encrypted_data)
-        URL = MajorLoginRegionMena
+        endpoints = [MajorLoginRegionMena, "https://loginbp.common.ggbluefox.com/MajorLogin"]
+        endpoints = list(dict.fromkeys(endpoints))
         RESPONSE = None
-        for attempt in range(1, 4):
-            try:
-                RESPONSE = requests.post(URL, headers=headers, data=Final_Payload, verify=False, timeout=20)
-                if RESPONSE.status_code == 200:
-                    break
-                self.set_last_error(f"major_login_http_{RESPONSE.status_code}")
-                print(f"[{self.account_id}] MajorLogin status {RESPONSE.status_code} (attempt {attempt}/3)")
-            except requests.RequestException as e:
-                self.set_last_error(f"major_login_request_error_attempt_{attempt}: {e}")
-                print(f"[{self.account_id}] MajorLogin request failed (attempt {attempt}/3): {e}")
-            time.sleep(min(2 * attempt, 5))
+        for endpoint in endpoints:
+            headers = dict(headers_base)
+            headers['Host'] = urlparse(endpoint).netloc
+            for attempt in range(1, 4):
+                try:
+                    RESPONSE = requests.post(endpoint, headers=headers, data=Final_Payload, verify=False, timeout=20)
+                    if RESPONSE.status_code == 200:
+                        break
+                    self.set_last_error(f"major_login_http_{RESPONSE.status_code}")
+                    print(f"[{self.account_id}] MajorLogin status {RESPONSE.status_code} on {endpoint} (attempt {attempt}/3)")
+                except requests.RequestException as e:
+                    self.set_last_error(f"major_login_request_error_attempt_{attempt}: {e}")
+                    print(f"[{self.account_id}] MajorLogin request failed on {endpoint} (attempt {attempt}/3): {e}")
+                time.sleep(min(2 * attempt, 5))
+            if RESPONSE and RESPONSE.status_code == 200:
+                break
 
         if not RESPONSE or RESPONSE.status_code != 200:
             return False
