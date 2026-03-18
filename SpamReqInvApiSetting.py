@@ -3,7 +3,7 @@ FreeFireVersion = "OB51"
 GetLoginDataRegionMena = "https://clientbp.ggpolarbear.com/GetLoginData" #CHANGE ACCORDING YOUR SERVER
 MajorLoginRegionMena = "https://loginbp.ggpolarbear.com/MajorLogin" #CHANGE ACCORDING YOUR SERVER 
 accounts = {
-   "4130126542": "YOUR PASSWORD"
+   "4442557101": "qq_HEDUI_BY_SPIDEERIO_GAMING_B6RUO"
 }
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import descriptor_pool as _descriptor_pool
