@@ -703,6 +703,14 @@ f = 'blacklist.txt'
 approvee = 'approved.txt'
 black , approve = [] , []
 
+def _safe_touch(path):
+    try:
+        with open(path, 'a'):
+            pass
+        return True
+    except OSError:
+        return False
+
 def load_blacklist():
     global black
     try: 
@@ -715,11 +723,11 @@ def encrypt_uids():
     try: 
         if black: black = [EnC_Uid(uid , Tp = 'Uid') for uid in black]
     except: 
-        try: open(f, 'w').close()
+        try: _safe_touch(f)
         except: pass
         load_blacklist()
 
-if not black: open(f, 'w').close()
+if not black: _safe_touch(f)
 
 def load_approve():
     global approve
@@ -732,11 +740,11 @@ def encrypt_uids2():
     try: 
         if approve: approve = [EnC_Uid(uid , Tp = 'Uid') for uid in approve]
     except: 
-        try: open(approvee, 'w').close()
+        try: _safe_touch(approvee)
         except: pass
         load_approve()
 
-if not approve: open(approvee, 'w').close()
+if not approve: _safe_touch(approvee)
                
 def Add_Uid(user_id):
     with open(f, 'r') as file: lines = file.read().splitlines()
@@ -1039,11 +1047,11 @@ def encrypt_uids():
     try: 
         if black: black = [EnC_Uid(uid , Tp = 'Uid') for uid in black]
     except: 
-        try: open(f, 'w').close()
+        try: _safe_touch(f)
         except: pass
         load_blacklist()
 
-if not black: open(f, 'w').close()
+if not black: _safe_touch(f)
 
 def load_approve():
     global approve
@@ -1056,11 +1064,11 @@ def encrypt_uids2():
     try: 
         if approve: approve = [EnC_Uid(uid , Tp = 'Uid') for uid in approve]
     except: 
-        try: open(approvee, 'w').close()
+        try: _safe_touch(approvee)
         except: pass
         load_approve()
 
-if not approve: open(approvee, 'w').close()
+if not approve: _safe_touch(approvee)
                
 def Add_Uid(user_id):
     with open(f, 'r') as file: lines = file.read().splitlines()
